@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 解密产物 / 密钥 —— 绝对不要提交
+*.jsonl
+*.db
+*.db-wal
+*.db-shm
+*.key
+key.txt
+
+# 本地
+dist/
+build/
+*.log
+.DS_Store

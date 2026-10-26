@@ -43,6 +43,9 @@ py -m venv .venv
 **别用系统 Python 或任何会被重置的环境** —— 实测 DSH 的 bundled runtime 更新后会丢包。
 两个包都有 cp314 预编译轮子，不需要编译。实测组合：Python 3.14.7 + frida 17.24.3 + sqlcipher3-wheels 0.5.7。
 
+> ⚠️ **frida 轮子 58 MB，国内直连可能只有 100~200 kB/s（实测 126 kB/s、13 分半），看着像卡死其实在下。**
+> 想快就换源：`pip install ... -i https://pypi.tuna.tsinghua.edu.cn/simple`
+
 ---
 
 ## 三步用法

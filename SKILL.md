@@ -31,6 +31,12 @@ py -m venv .venv
 实测可用组合（2026-10）：**Python 3.14.7 + frida 17.24.3 + sqlcipher3-wheels 0.5.7**。
 两者都有 cp314 预编译轮子，**不需要编译**。
 
+> ⚠️ **frida 的轮子有 58 MB，国内直连可能只有 100~200 kB/s（实测 126 kB/s，耗时 13 分半），看起来像卡死但其实在下载。**
+> 别中途掐掉。想快就换源：
+> ```powershell
+> .venv\Scripts\python -m pip install frida sqlcipher3-wheels -i https://pypi.tuna.tsinghua.edu.cn/simple
+> ```
+
 ## 0. 总体流程
 
 1. 找到目标账号的 nt_msg.db

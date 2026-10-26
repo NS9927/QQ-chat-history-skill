@@ -13,9 +13,23 @@ description: Decrypt and read local QQ NT (Windows) chat databases. Extracts the
 
 ## 前置条件
 
-- QQ NT（新版 Windows QQ，装在 C:\Program Files\Tencent\QQNT）
+- QQ NT（新版 Windows QQ，装在 `C:\Program Files\Tencent\QQNT`）
 - **目标账号必须处于登录状态**——数据库密钥只存在于 QQ 进程内存里
-- Python 3.10+；`pip install sqlcipher3-wheels frida`
+- Python 3.10+，装 `frida` 和 `sqlcipher3-wheels`
+
+### ⚠️ 用专用 venv，别依赖系统 / bundled Python
+
+DSH 自带的 bundled runtime **会被更新重置**，装好的包会凭空消失（实测：隔天 `import frida` 就报 `ModuleNotFoundError`）。所以固定用项目内 venv：
+
+```powershell
+py -m venv .venv
+.venv\Scripts\python -m pip install frida sqlcipher3-wheels
+```
+
+之后所有命令都用 `.venv\Scripts\python` 跑。
+
+实测可用组合（2026-10）：**Python 3.14.7 + frida 17.24.3 + sqlcipher3-wheels 0.5.7**。
+两者都有 cp314 预编译轮子，**不需要编译**。
 
 ## 0. 总体流程
 
@@ -42,21 +56,34 @@ description: Decrypt and read local QQ NT (Windows) chat databases. Extracts the
 
     python scripts/find_key_rva.py "C:\Program Files\Tencent\QQNT\versions\<版本>\resources\app\wrapper.node"
 
-原理：在 wrapper.node 里搜字符串 `nt_sqlite3_key_v2: db=%p zDb=%s`，找引用它的 LEA 指令，再用 `.pdata` 异常表反查所属函数起始 RVA。实测 9.9.35-52892 该函数在 RVA 0x21b8c80，入口约定 `rcx=db, rdx=zDbName, r8=pKey, r9d=nKey`。
+原理：在 wrapper.node 里搜字符串 `nt_sqlite3_key_v2: db=%p zDb=%s`，找引用它的 LEA 指令，再用 `.pdata` 异常表反查所属函数起始 RVA。入口约定 `rcx=db, rdx=zDbName, r8=pKey, r9d=nKey`。
+
+> ⚠️ **RVA 每个 QQ 版本都不一样，必须现算。文档里的数字只是历史记录，不要直接抄。**
+>
+> | QQ 版本 | `versions\` 下的目录 | 函数 RVA |
+> |---|---|---|
+> | 9.9.35-52892 | `9.9.35-52892` | `0x21b8c80`（**已失效**） |
+> | 9.9.36-53644 | `9.9.36-53644` | `0x21ebe20` |
+>
+> 先看当前版本：`ls "C:\Program Files\Tencent\QQNT\versions"`，再跑脚本。QQ 一升级 RVA 就变，这是最常见的翻车点。
 
 ### 2.2 Hook 抓密钥
 
-    python scripts/hook_key.py --rva 0x21b8c80
+    python scripts/hook_key.py --rva 0x21ebe20 --seconds 600
 
 Frida 会附加到所有 `QQ.exe` 进程，在函数入口读 `args[2]`（pKey 指针）和 `args[3]`（nKey）。命中示例：
 
-    HIT pid=18820 zdb=main n=16 key='0123456789abcdef'
+    HIT pid=21576 zdb=main n=16 key='0123456789abcdef'
 
-注意：
+**注意（这几条是隔壁会话卡了半天的原因，逐条看完）：**
 
 - **n=16** 是聊天库密钥；**n=20** 是 `login.db`（全客户端硬编码，不是我们要的）
-- 一次只能抓到「当时正在开库」的那个账号；如果目标账号的连接早已建立，可能一直不命中——多等几分钟，或在 QQ 里点开几个聊天窗口触发新连接
-- 密钥是账号级固定的，抓到一次就能开该账号所有 `nt_*` 库（`group_info.db`、`misc.db` 等同理）
+- **大部分 `QQ.exe` 子进程会 `attach failed`，这是正常的。** 实测 16 个进程只有 2 个注入成功——只要看到 `injected into pid=...` 就说明有戏，**别被满屏红字吓到，那不是失败**
+- **要等 2~5 分钟，别以为没戏就掐了。** 实测 **3 分 37 秒**才命中。QQ 即使已经登录，后台任务也会周期性重开数据库，hook 就是那时候抓到的
+- 想让它更快：在 QQ 里点开几个聊天窗口 / 消息管理器，触发新的开库
+- 等太久还不命中：把 `--seconds` 调大（默认 300，建议 600 以上），或检查 RVA 是不是跟当前 QQ 版本对得上
+- 密钥是**账号级固定**的，抓到一次就能开该账号所有 `nt_*` 库（`group_info.db`、`misc.db` 等同理）
+- **QQ 升级后密钥不变**（实测 9.9.35 → 9.9.36 后旧密钥依旧能解密），但**函数 RVA 会变**
 - 抓到的密钥**先用第 3 步验证**，不要直接信
 
 ## 3. 解密 / 打开数据库
@@ -170,4 +197,7 @@ QQ 正在写这个文件，复制可能产生**撕裂页**，表现为：
 | database disk image is malformed | 复制到撕裂页，重新快照 |
 | 抓到 n=20 的 key | 那是 login.db 的，继续等 16 字节的 |
 | 控制台中文乱码 | 设 PYTHONIOENCODING=utf-8 |
-| Frida 报 refused to load frida-agent | 部分子进程拒绝注入，换主进程（第一个 QQ.exe）重试 |
+| Frida 满屏 `refused to load frida-agent` | **正常**。多数子进程拒绝注入，只要有 1~2 个 `injected into` 就行，不用重试 |
+| 一直等不到 `HIT` | ① 先等够 2~5 分钟 ② 检查 RVA 是否对应当前 QQ 版本 ③ 点开几个聊天窗口触发开库 |
+| `ModuleNotFoundError: No module named 'frida'` | 用的是被重置的 bundled Python；改用项目内 `.venv` 并重装依赖 |
+| 查询能跑但结果全是乱码 | 设 `PYTHONIOENCODING=utf-8` |

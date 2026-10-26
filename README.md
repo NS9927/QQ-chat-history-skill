@@ -32,7 +32,16 @@
 - **QQ NT**（新版 Windows QQ），装在 `C:\Program Files\Tencent\QQNT`
 - **目标账号必须处于登录状态** —— 数据库密钥只存在于 QQ 进程内存里
 - Python 3.10+
-- `pip install sqlcipher3-wheels frida`
+
+### 装依赖：用专用 venv
+
+```powershell
+py -m venv .venv
+.venv\Scripts\python -m pip install frida sqlcipher3-wheels
+```
+
+**别用系统 Python 或任何会被重置的环境** —— 实测 DSH 的 bundled runtime 更新后会丢包。
+两个包都有 cp314 预编译轮子，不需要编译。实测组合：Python 3.14.7 + frida 17.24.3 + sqlcipher3-wheels 0.5.7。
 
 ---
 
@@ -50,7 +59,7 @@ python scripts/find_key_rva.py "C:/Program Files/Tencent/QQNT/versions/<版本>/
 ### 2. 抓密钥
 
 ```bash
-python scripts/hook_key.py --rva 0x21b8c80 --seconds 300
+python scripts/hook_key.py --rva <上一步算出来的 RVA> --seconds 600
 ```
 
 Frida 附加到所有 `QQ.exe`，在函数入口读密钥指针。命中示例（**示例值，非真实密钥**）：
@@ -60,8 +69,10 @@ HIT pid=18820 zdb=main n=16 key='0123456789abcdef'
 ```
 
 - `n=16` = 聊天库密钥；`n=20` = `login.db` 硬编码密钥（不是目标）
-- 密钥是**账号级固定**的，抓到一次就能开该账号所有 `nt_*` 库
-- 抓不到就让 QQ 重新开库（点开几个聊天窗口）
+- 密钥是**账号级固定**的，抓到一次就能开该账号所有 `nt_*` 库；**QQ 升级后密钥不变**
+- 满屏 `refused to load frida-agent` **是正常的**（16 个进程只有 2 个能注入），看到 `injected into pid=...` 就说明有戏
+- **要等 2~5 分钟**（实测 3 分 37 秒）。QQ 已登录时后台任务会周期性重开库，hook 就那时抓到
+- 想更快：点开几个聊天窗口 / 消息管理器，触发开库
 
 ### 3. 查询导出
 
@@ -90,6 +101,21 @@ python scripts/qq_query.py \
 
 ---
 
+## ⚠️ 最容易卡住的地方
+
+**1. RVA 每个 QQ 版本都不一样。** 下面的数字只是历史记录，**必须用 `find_key_rva.py` 现算**：
+
+| QQ 版本 | RVA |
+|---|---|
+| 9.9.35-52892 | `0x21b8c80`（已失效） |
+| 9.9.36-53644 | `0x21ebe20` |
+
+先 `ls "C:/Program Files/Tencent/QQNT/versions"` 看当前版本，再跑脚本。
+
+**2. Hook 要等，而且报错是假的。** 见上一步的说明。
+
+---
+
 ## 作为 DSH skill 使用
 
 ```bash
@@ -115,7 +141,7 @@ DSH 会自动扫描 `~/.dsh/skills` 下的目录，读取 `SKILL.md` 的 frontma
 ## 结构
 
 ```text
-qq-chat-decrypt/
+QQ-chat-history-skill/
 ├── SKILL.md                  Agent 指令（流程、坑表、字段速查）
 ├── scripts/
 │   ├── find_key_rva.py       定位密钥函数 RVA
